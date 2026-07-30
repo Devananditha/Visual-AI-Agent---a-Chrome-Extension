@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Visual AI Agent - Activity Viewer</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background-color: #f5f7fa;
+      color: #1a1a1a;
+    }
+
+    header {
+      background-color: #ffffff;
+      border-bottom: 1px solid #e2e8f0;
+      padding: 24px 32px;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+    }
+
+    header h1 {
+      margin: 0 0 8px;
+      font-size: 24px;
+      font-weight: 600;
+    }
+
+    header p {
+      margin: 0;
+      color: #64748b;
+      font-size: 14px;
+    }
+
+    main {
+      padding: 32px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .status {
+      margin-bottom: 24px;
+      font-size: 14px;
+      color: #475569;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 24px;
+    }
+
+    .card {
+      background: #ffffff;
+      padding: 16px;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+      border: 1px solid #e2e8f0;
+    }
+
+    .card time {
+      display: block;
+      margin-bottom: 12px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #334155;
+    }
+
+    .card img {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 8px;
+      border: 1px solid #e2e8f0;
+      background-color: #f8fafc;
+    }
+
+    .empty-state {
+      background: #ffffff;
+      padding: 48px 24px;
+      border-radius: 12px;
+      text-align: center;
+      color: #64748b;
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+      border: 1px solid #e2e8f0;
+    }
+
+    .error-state {
+      background: #fef2f2;
+      color: #b91c1c;
+      padding: 16px;
+      border-radius: 8px;
+      border: 1px solid #fecaca;
+      margin-bottom: 24px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Activity Viewer</h1>
+    <p>Review captured browser snapshots and timestamps from the Visual AI Agent.</p>
+  </header>
+
+  <main>
+    <div id="status" class="status">Loading activity...</div>
+    <div id="error" class="error-state" hidden></div>
+    <div id="grid" class="grid"></div>
+    <div id="empty" class="empty-state" hidden>No captured activity found yet.</div>
+  </main>
+
+  <script>
+    function formatFrameSource(frame) {
+      if (!frame) {
+        return '';
+      }
+
+      if (frame.startsWith('data:')) {
+        return frame;
+      }
+
+      return `data:image/jpeg;base64,${frame}`;
+    }
+
+    async function loadActivity() {
+      const statusElement = document.getElementById('status');
+      const errorElement = document.getElementById('error');
+      const gridElement = document.getElementById('grid');
+      const emptyElement = document.getElementById('empty');
+
+      try {
+        const response = await fetch('/api/activity');
+
+        if (!response.ok) {
+          throw new Error('Failed to fetch activity data.');
+        }
+
+        const activities = await response.json();
+        const sortedActivities = activities.reverse();
+
+        gridElement.innerHTML = '';
+
+        if (sortedActivities.length === 0) {
+          statusElement.textContent = '0 captures loaded';
+          emptyElement.hidden = false;
+          return;
+        }
+
+        emptyElement.hidden = true;
+        statusElement.textContent = `${sortedActivities.length} capture${sortedActivities.length === 1 ? '' : 's'} loaded`;
+
+        sortedActivities.forEach((activity) => {
+          const card = document.createElement('article');
+          card.className = 'card';
+
+          const timestamp = document.createElement('time');
+          timestamp.dateTime = activity.timestamp;
+          timestamp.textContent = new Date(activity.timestamp).toLocaleString();
+
+          const image = document.createElement('img');
+          image.src = formatFrameSource(activity.frame);
+          image.alt = `Captured snapshot at ${activity.timestamp}`;
+
+          card.appendChild(timestamp);
+          card.appendChild(image);
+          gridElement.appendChild(card);
+        });
+      } catch (error) {
+        errorElement.hidden = false;
+        errorElement.textContent = error.message;
+        statusElement.textContent = 'Unable to load activity.';
+      }
+    }
+
+    loadActivity();
+  </script>
+</body>
+</html>

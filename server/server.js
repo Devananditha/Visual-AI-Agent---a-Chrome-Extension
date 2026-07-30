@@ -12,8 +12,32 @@ const app = express();
 
 let writeQueue = Promise.resolve();
 
+app.use(express.static(path.join(__dirname, 'public')));
+
 app.get('/health', (_request, response) => {
   response.json({ status: 'ok' });
+});
+
+app.get('/api/activity', async (_request, response) => {
+  try {
+    try {
+      await fs.access(ACTIVITY_LOG_PATH);
+    } catch {
+      response.json([]);
+      return;
+    }
+
+    const fileContent = await fs.readFile(ACTIVITY_LOG_PATH, 'utf8');
+    const activity = fileContent
+      .split('\n')
+      .filter((line) => line.trim().length > 0)
+      .map((line) => JSON.parse(line));
+
+    response.json(activity);
+  } catch (error) {
+    console.error('[Server] Failed to read activity log:', error);
+    response.status(500).json({ error: 'Failed to read activity log.' });
+  }
 });
 
 /**
