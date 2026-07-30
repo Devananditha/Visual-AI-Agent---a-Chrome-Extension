@@ -256,4 +256,4 @@ This prevents unbounded disk growth while preserving recent activity for dashboa
 
 ## License
 
-This project was developed as a take-home assignment for Neoflo AI.
+MIT License — Copyright (c) 2026 Devananditha V. See [LICENSE](LICENSE) for details.
