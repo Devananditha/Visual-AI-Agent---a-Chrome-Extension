@@ -4,5 +4,6 @@ Thumbs.db
 node_modules/
 server/node_modules/
 server/data/activity-log.json
+server/data/activity-log.ndjson
 .env
 .env.*

@@ -3,7 +3,8 @@
  */
 
 const TARGET_FRAME_WIDTH = 1024;
-const JPEG_QUALITY = 0.6;
+const JPEG_QUALITY = 0.5;
+const MAX_PAYLOAD_CHARS = 400000;
 const WEBSOCKET_URL = 'ws://localhost:3000/vision-stream';
 
 const videoElement = document.getElementById('capture-stream');
@@ -81,10 +82,18 @@ function connectVisionStream() {
  * @param {string} base64Frame
  */
 function sendFrameToServer(base64Frame) {
+  const commaIndex = base64Frame.indexOf(',');
+  const frameData = commaIndex >= 0 ? base64Frame.slice(commaIndex + 1) : base64Frame;
+
   const payload = JSON.stringify({
     timestamp: new Date().toISOString(),
-    frame: base64Frame,
+    frame: frameData,
   });
+
+  if (payload.length > MAX_PAYLOAD_CHARS) {
+    console.error('[Offscreen] Frame payload exceeds safe size limit, skipping send.');
+    return;
+  }
 
   try {
     connectVisionStream();
@@ -134,7 +143,7 @@ chrome.runtime.onMessage.addListener((message) => {
     return;
   }
 
-  if (message.type === 'TAKE_SNAPSHOT') {
+  if (message.type === 'OFFSCREEN_SNAPSHOT') {
     const base64Frame = extractFrame();
 
     if (base64Frame) {

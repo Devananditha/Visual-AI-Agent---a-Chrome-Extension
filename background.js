@@ -5,6 +5,8 @@
 
 const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
 
+let isCapturing = false;
+
 /**
  * Returns true if the offscreen document is already open.
  */
@@ -78,7 +80,7 @@ async function routeSnapshotToOffscreen() {
       return;
     }
 
-    await chrome.runtime.sendMessage({ type: 'TAKE_SNAPSHOT' });
+    await chrome.runtime.sendMessage({ type: 'OFFSCREEN_SNAPSHOT' });
   } catch {
     // Offscreen document is not ready to receive messages yet.
   }
@@ -107,7 +109,16 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     return;
   }
 
-  if (message.type === 'TAKE_SNAPSHOT' && sender.tab) {
+  if (message.type === 'TAKE_SNAPSHOT') {
+    if (isCapturing) {
+      return;
+    }
+
+    isCapturing = true;
     routeSnapshotToOffscreen();
+
+    setTimeout(() => {
+      isCapturing = false;
+    }, 1000);
   }
 });

@@ -6,9 +6,11 @@ const { WebSocketServer } = require('ws');
 
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.join(__dirname, 'data');
-const ACTIVITY_LOG_PATH = path.join(DATA_DIR, 'activity-log.json');
+const ACTIVITY_LOG_PATH = path.join(DATA_DIR, 'activity-log.ndjson');
 
 const app = express();
+
+let writeQueue = Promise.resolve();
 
 app.get('/health', (_request, response) => {
   response.json({ status: 'ok' });
@@ -23,27 +25,26 @@ async function ensureActivityLogFile() {
   try {
     await fs.access(ACTIVITY_LOG_PATH);
   } catch {
-    await fs.writeFile(ACTIVITY_LOG_PATH, '[]', 'utf8');
+    await fs.writeFile(ACTIVITY_LOG_PATH, '', 'utf8');
   }
 }
 
 /**
- * Appends a frame record to the local JSON activity log.
+ * Appends a frame record to the local NDJSON activity log.
+ * Uses line-delimited JSON to avoid re-parsing large files on every write.
  * @param {{ timestamp: string, frame: string }} record
  */
 async function appendActivityRecord(record) {
   await ensureActivityLogFile();
 
-  const existingContent = await fs.readFile(ACTIVITY_LOG_PATH, 'utf8');
-  const activityLog = JSON.parse(existingContent);
-
-  activityLog.push({
+  const entry = JSON.stringify({
     timestamp: record.timestamp,
     frameLength: record.frame.length,
     frame: record.frame,
   });
 
-  await fs.writeFile(ACTIVITY_LOG_PATH, JSON.stringify(activityLog, null, 2), 'utf8');
+  writeQueue = writeQueue.then(() => fs.appendFile(ACTIVITY_LOG_PATH, `${entry}\n`, 'utf8'));
+  await writeQueue;
 }
 
 const server = http.createServer(app);
@@ -51,6 +52,7 @@ const server = http.createServer(app);
 const visionStreamServer = new WebSocketServer({
   server,
   path: '/vision-stream',
+  maxPayload: 16 * 1024 * 1024,
 });
 
 visionStreamServer.on('connection', (socket) => {
@@ -108,4 +110,5 @@ server.listen(PORT, async () => {
   await ensureActivityLogFile();
   console.log(`[Server] HTTP server listening on http://localhost:${PORT}`);
   console.log(`[Server] WebSocket endpoint available at ws://localhost:${PORT}/vision-stream`);
+  console.log(`[Server] Activity log path: ${ACTIVITY_LOG_PATH}`);
 });

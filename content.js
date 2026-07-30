@@ -3,19 +3,8 @@
  * Captures DOM-level user activity events and triggers snapshots.
  */
 
-const CAPTURE_DEBOUNCE_MS = 500;
-
-let debounceTimer = null;
-
-/**
- * Debounces snapshot requests so rapid events produce a single capture.
- */
 function triggerCapture() {
-  clearTimeout(debounceTimer);
-
-  debounceTimer = setTimeout(() => {
-    chrome.runtime.sendMessage({ type: 'TAKE_SNAPSHOT' });
-  }, CAPTURE_DEBOUNCE_MS);
+  chrome.runtime.sendMessage({ type: 'TAKE_SNAPSHOT' });
 }
 
 function initializeActivityObservers() {
