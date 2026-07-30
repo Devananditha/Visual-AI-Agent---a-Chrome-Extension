@@ -5,5 +5,6 @@ node_modules/
 server/node_modules/
 server/data/activity-log.json
 server/data/activity-log.ndjson
+server/data/activity-log.tmp.ndjson
 .env
 .env.*

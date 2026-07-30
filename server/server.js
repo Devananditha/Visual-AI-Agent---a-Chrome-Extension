@@ -1,8 +1,10 @@
 const express = require('express');
-const fs = require('fs/promises');
+const fs = require('fs');
+const fsp = require('fs/promises');
 const http = require('http');
 const jwt = require('jsonwebtoken');
 const path = require('path');
+const readline = require('readline');
 const { WebSocketServer } = require('ws');
 
 const PORT = process.env.PORT || 3000;
@@ -11,6 +13,9 @@ const AUTH_USERNAME = 'visual-ai-agent';
 const AUTH_PASSWORD = 'extension-secret';
 const DATA_DIR = path.join(__dirname, 'data');
 const ACTIVITY_LOG_PATH = path.join(DATA_DIR, 'activity-log.ndjson');
+const ACTIVITY_LOG_TMP_PATH = path.join(DATA_DIR, 'activity-log.tmp.ndjson');
+const LOG_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const PURGE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 const app = express();
 
@@ -44,13 +49,13 @@ app.post('/api/auth', (request, response) => {
 app.get('/api/activity', async (_request, response) => {
   try {
     try {
-      await fs.access(ACTIVITY_LOG_PATH);
+      await fsp.access(ACTIVITY_LOG_PATH);
     } catch {
       response.json([]);
       return;
     }
 
-    const fileContent = await fs.readFile(ACTIVITY_LOG_PATH, 'utf8');
+    const fileContent = await fsp.readFile(ACTIVITY_LOG_PATH, 'utf8');
     const activity = fileContent
       .split('\n')
       .filter((line) => line.trim().length > 0)
@@ -67,12 +72,76 @@ app.get('/api/activity', async (_request, response) => {
  * Ensures the data directory and activity log file exist.
  */
 async function ensureActivityLogFile() {
-  await fs.mkdir(DATA_DIR, { recursive: true });
+  await fsp.mkdir(DATA_DIR, { recursive: true });
 
   try {
-    await fs.access(ACTIVITY_LOG_PATH);
+    await fsp.access(ACTIVITY_LOG_PATH);
   } catch {
-    await fs.writeFile(ACTIVITY_LOG_PATH, '', 'utf8');
+    await fsp.writeFile(ACTIVITY_LOG_PATH, '', 'utf8');
+  }
+}
+
+/**
+ * Streams the NDJSON activity log and removes records older than 30 days.
+ */
+async function purgeOldLogs() {
+  await writeQueue;
+
+  try {
+    if (!fs.existsSync(ACTIVITY_LOG_PATH)) {
+      return;
+    }
+
+    const cutoff = Date.now() - LOG_TTL_MS;
+    const readStream = fs.createReadStream(ACTIVITY_LOG_PATH, { encoding: 'utf8' });
+    const writeStream = fs.createWriteStream(ACTIVITY_LOG_TMP_PATH, { encoding: 'utf8' });
+    const lineReader = readline.createInterface({
+      input: readStream,
+      crlfDelay: Infinity,
+    });
+
+    let keptRecords = 0;
+    let removedRecords = 0;
+
+    for await (const line of lineReader) {
+      if (!line.trim()) {
+        continue;
+      }
+
+      try {
+        const record = JSON.parse(line);
+        const recordTime = new Date(record.timestamp).getTime();
+
+        if (Number.isNaN(recordTime)) {
+          continue;
+        }
+
+        if (recordTime > cutoff) {
+          writeStream.write(`${line}\n`);
+          keptRecords += 1;
+        } else {
+          removedRecords += 1;
+        }
+      } catch {
+        // Skip malformed lines during purge.
+      }
+    }
+
+    await new Promise((resolve, reject) => {
+      writeStream.on('error', reject);
+      writeStream.end(resolve);
+    });
+
+    fs.renameSync(ACTIVITY_LOG_TMP_PATH, ACTIVITY_LOG_PATH);
+    console.log(
+      `[Server] TTL purge complete. Removed ${removedRecords} records, kept ${keptRecords}.`,
+    );
+  } catch (error) {
+    console.error('[Server] Failed to purge old logs:', error);
+
+    if (fs.existsSync(ACTIVITY_LOG_TMP_PATH)) {
+      fs.unlinkSync(ACTIVITY_LOG_TMP_PATH);
+    }
   }
 }
 
@@ -90,7 +159,7 @@ async function appendActivityRecord(record) {
     frame: record.frame,
   });
 
-  writeQueue = writeQueue.then(() => fs.appendFile(ACTIVITY_LOG_PATH, `${entry}\n`, 'utf8'));
+  writeQueue = writeQueue.then(() => fsp.appendFile(ACTIVITY_LOG_PATH, `${entry}\n`, 'utf8'));
   await writeQueue;
 }
 
@@ -194,6 +263,17 @@ server.on('error', (error) => {
 
 server.listen(PORT, async () => {
   await ensureActivityLogFile();
+
+  purgeOldLogs().catch((error) => {
+    console.error('[Server] Startup TTL purge failed:', error);
+  });
+
+  setInterval(() => {
+    purgeOldLogs().catch((error) => {
+      console.error('[Server] Scheduled TTL purge failed:', error);
+    });
+  }, PURGE_INTERVAL_MS);
+
   console.log(`[Server] HTTP server listening on http://localhost:${PORT}`);
   console.log(`[Server] WebSocket endpoint available at ws://localhost:${PORT}/vision-stream`);
   console.log(`[Server] Activity log path: ${ACTIVITY_LOG_PATH}`);

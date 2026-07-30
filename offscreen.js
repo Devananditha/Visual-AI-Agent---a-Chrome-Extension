@@ -95,6 +95,8 @@ chrome.runtime.onMessage.addListener((message) => {
 
     if (base64Frame) {
       sendFrameToBackground(base64Frame);
+    } else {
+      console.warn('[Offscreen] Snapshot skipped: video stream has no drawable frame yet.');
     }
   }
 });

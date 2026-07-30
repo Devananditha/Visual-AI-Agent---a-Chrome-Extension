@@ -113,9 +113,19 @@ class ReconnectingWebSocket {
 
     this.pendingMessages.push(data);
 
-    if (!this.socket || this.socket.readyState === WebSocket.CLOSED) {
-      this.reconnect();
+    if (this.shouldReconnect && this.url) {
+      if (!this.socket || this.socket.readyState === WebSocket.CLOSED) {
+        this.reconnect();
+      }
     }
+  }
+
+  isOpen() {
+    return Boolean(this.socket && this.socket.readyState === WebSocket.OPEN);
+  }
+
+  resetAttempts() {
+    this.currentAttempt = 0;
   }
 
   flushPendingMessages() {
@@ -155,36 +165,54 @@ const visionStream = new ReconnectingWebSocket();
 /**
  * Fetches a JWT from the backend auth endpoint and stores it in memory.
  */
-async function fetchAuthToken() {
-  try {
-    const response = await fetch(AUTH_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        username: AUTH_USERNAME,
-        password: AUTH_PASSWORD,
-      }),
-    });
+async function fetchAuthToken(maxAttempts = 5) {
+  let lastError = null;
 
-    if (!response.ok) {
-      throw new Error(`Auth request failed with status ${response.status}`);
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      const response = await fetch(AUTH_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          username: AUTH_USERNAME,
+          password: AUTH_PASSWORD,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Auth request failed with status ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      if (!data.token) {
+        throw new Error('Auth response did not include a token.');
+      }
+
+      jwtToken = data.token;
+      await chrome.storage.session.set({
+        jwtToken,
+        trackingActive: true,
+      });
+      console.log('[Background] JWT fetched successfully.');
+      return jwtToken;
+    } catch (error) {
+      lastError = error;
+      console.error(
+        `[Background] JWT fetch attempt ${attempt + 1}/${maxAttempts} failed:`,
+        error,
+      );
+
+      if (attempt < maxAttempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+      }
     }
-
-    const data = await response.json();
-
-    if (!data.token) {
-      throw new Error('Auth response did not include a token.');
-    }
-
-    jwtToken = data.token;
-    console.log('[Background] JWT fetched successfully.');
-    return jwtToken;
-  } catch (error) {
-    console.error('[Background] Failed to fetch JWT:', error);
-    throw error;
   }
+
+  console.error('[Background] Failed to fetch JWT after all retries:', lastError);
+  throw lastError;
 }
 
 /**
@@ -243,9 +271,35 @@ function connectVisionStream(token) {
 }
 
 /**
+ * Ensures the WebSocket is connected when offscreen tracking is active.
+ * Restores connection after service worker restarts or network drops.
+ */
+async function ensureVisionStreamConnected() {
+  if (!(await hasOffscreenDocument())) {
+    return;
+  }
+
+  if (visionStream.isOpen()) {
+    return;
+  }
+
+  if (!jwtToken) {
+    const stored = await chrome.storage.session.get(['jwtToken']);
+    jwtToken = stored.jwtToken || null;
+  }
+
+  if (!jwtToken) {
+    await fetchAuthToken();
+  }
+
+  visionStream.resetAttempts();
+  connectVisionStream(jwtToken);
+}
+
+/**
  * Sends a captured frame payload to the backend over WebSocket.
  */
-function sendFrameToServer(frame, timestamp) {
+async function sendFrameToServer(frame, timestamp) {
   const payload = JSON.stringify({
     timestamp,
     frame,
@@ -256,16 +310,15 @@ function sendFrameToServer(frame, timestamp) {
     return;
   }
 
+  await ensureVisionStreamConnected();
   visionStream.send(payload);
 }
 
 /**
  * Starts tab capture by creating the offscreen document and forwarding the stream ID.
+ * Tab capture starts first so frames can be extracted even if auth is temporarily unavailable.
  */
 async function startTabCapture() {
-  const token = await fetchAuthToken();
-  connectVisionStream(token);
-
   if (!(await hasOffscreenDocument())) {
     await createOffscreenDocument();
   }
@@ -283,6 +336,10 @@ async function startTabCapture() {
     type: 'START_STREAM',
     streamId,
   });
+
+  console.log('[Background] Tab capture stream started in offscreen document.');
+
+  await ensureVisionStreamConnected();
 }
 
 /**
@@ -291,6 +348,10 @@ async function startTabCapture() {
 async function stopTabCapture() {
   visionStream.disconnect();
   jwtToken = null;
+  await chrome.storage.session.set({
+    jwtToken: null,
+    trackingActive: false,
+  });
 
   if (!(await hasOffscreenDocument())) {
     return;
@@ -316,6 +377,9 @@ async function routeSnapshotToOffscreen() {
 
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (message.type === 'keepAlive') {
+    ensureVisionStreamConnected().catch((error) => {
+      console.error('[Background] Failed to restore WebSocket on heartbeat:', error);
+    });
     console.log(
       '[Background] Heartbeat received from offscreen document at',
       new Date().toISOString(),
@@ -338,7 +402,9 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   }
 
   if (message.type === 'FRAME_DATA' && message.frame && message.timestamp) {
-    sendFrameToServer(message.frame, message.timestamp);
+    sendFrameToServer(message.frame, message.timestamp).catch((error) => {
+      console.error('[Background] Failed to send frame to server:', error);
+    });
     return;
   }
 
