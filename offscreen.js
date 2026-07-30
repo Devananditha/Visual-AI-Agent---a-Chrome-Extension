@@ -4,10 +4,13 @@
 
 const TARGET_FRAME_WIDTH = 1024;
 const JPEG_QUALITY = 0.6;
+const WEBSOCKET_URL = 'ws://localhost:3000/vision-stream';
 
 const videoElement = document.getElementById('capture-stream');
 const frameCanvas = document.getElementById('frame-canvas');
 const frameContext = frameCanvas.getContext('2d');
+
+let visionSocket = null;
 
 /**
  * Returns true when the video element has a drawable frame.
@@ -47,6 +50,63 @@ function extractFrame() {
 }
 
 /**
+ * Opens a WebSocket connection to the backend vision stream endpoint.
+ */
+function connectVisionStream() {
+  if (visionSocket && (
+    visionSocket.readyState === WebSocket.OPEN ||
+    visionSocket.readyState === WebSocket.CONNECTING
+  )) {
+    return;
+  }
+
+  try {
+    visionSocket = new WebSocket(WEBSOCKET_URL);
+
+    visionSocket.addEventListener('error', (error) => {
+      console.error('[Offscreen] WebSocket connection error:', error);
+    });
+
+    visionSocket.addEventListener('close', () => {
+      visionSocket = null;
+    });
+  } catch (error) {
+    console.error('[Offscreen] Failed to open WebSocket connection:', error);
+    visionSocket = null;
+  }
+}
+
+/**
+ * Sends a captured frame and timestamp to the backend over WebSocket.
+ * @param {string} base64Frame
+ */
+function sendFrameToServer(base64Frame) {
+  const payload = JSON.stringify({
+    timestamp: new Date().toISOString(),
+    frame: base64Frame,
+  });
+
+  try {
+    connectVisionStream();
+
+    if (!visionSocket) {
+      return;
+    }
+
+    if (visionSocket.readyState === WebSocket.OPEN) {
+      visionSocket.send(payload);
+      return;
+    }
+
+    visionSocket.addEventListener('open', () => {
+      visionSocket.send(payload);
+    }, { once: true });
+  } catch (error) {
+    console.error('[Offscreen] Failed to send frame to server:', error);
+  }
+}
+
+/**
  * Binds a tab capture stream to the hidden video element.
  * @param {string} streamId - Media stream ID from chrome.tabCapture.getMediaStreamId
  */
@@ -63,6 +123,7 @@ async function startCaptureStream(streamId) {
 
   videoElement.srcObject = mediaStream;
   await videoElement.play();
+  connectVisionStream();
 }
 
 chrome.runtime.onMessage.addListener((message) => {
@@ -77,7 +138,7 @@ chrome.runtime.onMessage.addListener((message) => {
     const base64Frame = extractFrame();
 
     if (base64Frame) {
-      console.log('[Offscreen] Extracted frame base64 length:', base64Frame.length);
+      sendFrameToServer(base64Frame);
     }
   }
 });

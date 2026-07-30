@@ -1,0 +1,13 @@
+{
+  "name": "visual-ai-agent-server",
+  "version": "1.0.0",
+  "description": "Backend server for Visual AI Agent frame ingestion",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "ws": "^8.18.0"
+  }
+}
