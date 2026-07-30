@@ -5,11 +5,152 @@
 
 const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
 const AUTH_URL = 'http://localhost:3000/api/auth';
+const WEBSOCKET_BASE_URL = 'ws://localhost:3000/vision-stream';
 const AUTH_USERNAME = 'visual-ai-agent';
 const AUTH_PASSWORD = 'extension-secret';
+const MAX_PAYLOAD_CHARS = 400000;
 
 let isCapturing = false;
 let jwtToken = null;
+
+/**
+ * WebSocket wrapper with exponential backoff and jitter reconnection.
+ */
+class ReconnectingWebSocket {
+  constructor() {
+    this.maxAttempts = 10;
+    this.currentAttempt = 0;
+    this.baseDelay = 500;
+    this.url = null;
+    this.socket = null;
+    this.reconnectTimer = null;
+    this.shouldReconnect = false;
+    this.pendingMessages = [];
+  }
+
+  connect(url) {
+    this.url = url;
+    this.shouldReconnect = true;
+    this.currentAttempt = 0;
+    this.openConnection();
+  }
+
+  openConnection() {
+    if (!this.url) {
+      return;
+    }
+
+    if (this.socket) {
+      this.socket.onopen = null;
+      this.socket.onerror = null;
+      this.socket.onclose = null;
+      this.socket.close();
+      this.socket = null;
+    }
+
+    try {
+      const ws = new WebSocket(this.url);
+      this.socket = ws;
+
+      ws.onopen = () => {
+        console.log('[Background] WebSocket connected.');
+        this.currentAttempt = 0;
+        this.flushPendingMessages();
+      };
+
+      ws.onerror = (error) => {
+        console.error('[Background] WebSocket error:', error);
+        this.reconnect();
+      };
+
+      ws.onclose = () => {
+        this.socket = null;
+
+        if (this.shouldReconnect) {
+          this.reconnect();
+        }
+      };
+    } catch (error) {
+      console.error('[Background] WebSocket connection failed:', error);
+      this.reconnect();
+    }
+  }
+
+  reconnect() {
+    if (!this.shouldReconnect || !this.url) {
+      return;
+    }
+
+    if (this.currentAttempt >= this.maxAttempts) {
+      console.error('[Background] WebSocket max reconnect attempts reached.');
+      return;
+    }
+
+    if (this.reconnectTimer) {
+      return;
+    }
+
+    const delay = Math.min(this.baseDelay * Math.pow(2, this.currentAttempt), 30000)
+      + Math.random() * 1000;
+
+    console.log(
+      `[Background] WebSocket reconnect scheduled in ${Math.round(delay)}ms`,
+      `(attempt ${this.currentAttempt + 1}/${this.maxAttempts})`,
+    );
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.currentAttempt += 1;
+      this.openConnection();
+    }, delay);
+  }
+
+  send(data) {
+    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+      this.socket.send(data);
+      return;
+    }
+
+    this.pendingMessages.push(data);
+
+    if (!this.socket || this.socket.readyState === WebSocket.CLOSED) {
+      this.reconnect();
+    }
+  }
+
+  flushPendingMessages() {
+    while (
+      this.pendingMessages.length > 0
+      && this.socket
+      && this.socket.readyState === WebSocket.OPEN
+    ) {
+      this.socket.send(this.pendingMessages.shift());
+    }
+  }
+
+  disconnect() {
+    this.shouldReconnect = false;
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    if (this.socket) {
+      this.socket.onopen = null;
+      this.socket.onerror = null;
+      this.socket.onclose = null;
+      this.socket.close();
+      this.socket = null;
+    }
+
+    this.pendingMessages = [];
+    this.currentAttempt = 0;
+    this.url = null;
+  }
+}
+
+const visionStream = new ReconnectingWebSocket();
 
 /**
  * Fetches a JWT from the backend auth endpoint and stores it in memory.
@@ -94,10 +235,36 @@ async function sendToOffscreen(message) {
 }
 
 /**
+ * Connects the authenticated vision stream WebSocket.
+ */
+function connectVisionStream(token) {
+  const websocketUrl = `${WEBSOCKET_BASE_URL}?token=${token}`;
+  visionStream.connect(websocketUrl);
+}
+
+/**
+ * Sends a captured frame payload to the backend over WebSocket.
+ */
+function sendFrameToServer(frame, timestamp) {
+  const payload = JSON.stringify({
+    timestamp,
+    frame,
+  });
+
+  if (payload.length > MAX_PAYLOAD_CHARS) {
+    console.error('[Background] Frame payload exceeds safe size limit, skipping send.');
+    return;
+  }
+
+  visionStream.send(payload);
+}
+
+/**
  * Starts tab capture by creating the offscreen document and forwarding the stream ID.
  */
 async function startTabCapture() {
   const token = await fetchAuthToken();
+  connectVisionStream(token);
 
   if (!(await hasOffscreenDocument())) {
     await createOffscreenDocument();
@@ -115,7 +282,6 @@ async function startTabCapture() {
   await sendToOffscreen({
     type: 'START_STREAM',
     streamId,
-    token,
   });
 }
 
@@ -123,12 +289,14 @@ async function startTabCapture() {
  * Stops tab capture and closes the offscreen document to release the media stream.
  */
 async function stopTabCapture() {
+  visionStream.disconnect();
+  jwtToken = null;
+
   if (!(await hasOffscreenDocument())) {
     return;
   }
 
   await chrome.offscreen.closeDocument();
-  jwtToken = null;
 }
 
 /**
@@ -166,6 +334,11 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     stopTabCapture().catch((error) => {
       console.error('[Background] Failed to stop tab capture:', error);
     });
+    return;
+  }
+
+  if (message.type === 'FRAME_DATA' && message.frame && message.timestamp) {
+    sendFrameToServer(message.frame, message.timestamp);
     return;
   }
 

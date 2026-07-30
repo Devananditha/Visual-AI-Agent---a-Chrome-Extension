@@ -4,15 +4,10 @@
 
 const TARGET_FRAME_WIDTH = 1024;
 const JPEG_QUALITY = 0.5;
-const MAX_PAYLOAD_CHARS = 400000;
-const WEBSOCKET_BASE_URL = 'ws://localhost:3000/vision-stream';
 
 const videoElement = document.getElementById('capture-stream');
 const frameCanvas = document.getElementById('frame-canvas');
 const frameContext = frameCanvas.getContext('2d');
-
-let visionSocket = null;
-let jwtToken = null;
 
 /**
  * Returns true when the video element has a drawable frame.
@@ -52,93 +47,27 @@ function extractFrame() {
 }
 
 /**
- * Opens an authenticated WebSocket connection after JWT is available.
- */
-function connectVisionStream() {
-  if (!jwtToken) {
-    console.error('[Offscreen] Cannot connect WebSocket without JWT token.');
-    return;
-  }
-
-  if (visionSocket) {
-    visionSocket.close();
-    visionSocket = null;
-  }
-
-  try {
-    const ws = new WebSocket(`${WEBSOCKET_BASE_URL}?token=${jwtToken}`);
-    visionSocket = ws;
-
-    ws.addEventListener('open', () => {
-      console.log('[Offscreen] WebSocket connected with JWT.');
-    });
-
-    ws.addEventListener('error', (error) => {
-      console.error('[Offscreen] WebSocket connection error:', error);
-    });
-
-    ws.addEventListener('close', () => {
-      visionSocket = null;
-    });
-  } catch (error) {
-    console.error('[Offscreen] Failed to open WebSocket connection:', error);
-    visionSocket = null;
-  }
-}
-
-/**
- * Sends a captured frame and timestamp to the backend over WebSocket.
+ * Sends extracted frame data to the background service worker for WebSocket delivery.
  * @param {string} base64Frame
  */
-function sendFrameToServer(base64Frame) {
-  if (!jwtToken) {
-    console.error('[Offscreen] Cannot send frame without JWT token.');
-    return;
-  }
-
+function sendFrameToBackground(base64Frame) {
   const commaIndex = base64Frame.indexOf(',');
   const frameData = commaIndex >= 0 ? base64Frame.slice(commaIndex + 1) : base64Frame;
 
-  const payload = JSON.stringify({
+  chrome.runtime.sendMessage({
+    type: 'FRAME_DATA',
     timestamp: new Date().toISOString(),
     frame: frameData,
+  }).catch((error) => {
+    console.error('[Offscreen] Failed to send frame to background:', error);
   });
-
-  if (payload.length > MAX_PAYLOAD_CHARS) {
-    console.error('[Offscreen] Frame payload exceeds safe size limit, skipping send.');
-    return;
-  }
-
-  try {
-    if (!visionSocket || visionSocket.readyState === WebSocket.CLOSED) {
-      connectVisionStream();
-    }
-
-    if (!visionSocket) {
-      return;
-    }
-
-    if (visionSocket.readyState === WebSocket.OPEN) {
-      visionSocket.send(payload);
-      return;
-    }
-
-    visionSocket.addEventListener('open', () => {
-      visionSocket.send(payload);
-    }, { once: true });
-  } catch (error) {
-    console.error('[Offscreen] Failed to send frame to server:', error);
-  }
 }
 
 /**
  * Binds a tab capture stream to the hidden video element.
  * @param {string} streamId - Media stream ID from chrome.tabCapture.getMediaStreamId
- * @param {string} token - JWT used to authenticate the WebSocket connection
  */
-async function startCaptureStream(streamId, token) {
-  jwtToken = token;
-
+async function startCaptureStream(streamId) {
   const mediaStream = await navigator.mediaDevices.getUserMedia({
     audio: false,
     video: {
@@ -151,12 +80,11 @@ async function startCaptureStream(streamId, token) {
 
   videoElement.srcObject = mediaStream;
   await videoElement.play();
-  connectVisionStream();
 }
 
 chrome.runtime.onMessage.addListener((message) => {
-  if (message.type === 'START_STREAM' && message.streamId && message.token) {
-    startCaptureStream(message.streamId, message.token).catch((error) => {
+  if (message.type === 'START_STREAM' && message.streamId) {
+    startCaptureStream(message.streamId).catch((error) => {
       console.error('[Offscreen] Failed to start capture stream:', error);
     });
     return;
@@ -166,7 +94,7 @@ chrome.runtime.onMessage.addListener((message) => {
     const base64Frame = extractFrame();
 
     if (base64Frame) {
-      sendFrameToServer(base64Frame);
+      sendFrameToBackground(base64Frame);
     }
   }
 });
