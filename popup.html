@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Visual AI Agent</title>
+  <style>
+    body {
+      width: 280px;
+      margin: 0;
+      padding: 16px;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+      color: #1a1a1a;
+    }
+
+    h1 {
+      margin: 0 0 16px;
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .controls {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    button {
+      padding: 10px 16px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+
+    #start-tracking {
+      background-color: #1a73e8;
+      color: #ffffff;
+    }
+
+    #start-tracking:hover {
+      background-color: #1557b0;
+    }
+
+    #stop-tracking {
+      background-color: #ffffff;
+      color: #1a1a1a;
+      border: 1px solid #dadce0;
+    }
+
+    #stop-tracking:hover {
+      background-color: #f1f3f4;
+    }
+  </style>
+</head>
+<body>
+  <h1>Visual AI Agent</h1>
+  <div class="controls">
+    <button id="start-tracking" type="button">Start Tracking</button>
+    <button id="stop-tracking" type="button">Stop Tracking</button>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
