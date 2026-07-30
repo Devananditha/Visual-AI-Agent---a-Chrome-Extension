@@ -7,10 +7,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const stopButton = document.getElementById('stop-tracking');
 
   startButton.addEventListener('click', () => {
+    startButton.disabled = true;
+    stopButton.disabled = false;
     chrome.runtime.sendMessage({ type: 'START_TRACKING' });
   });
 
   stopButton.addEventListener('click', () => {
-    // Tracking stop logic will be implemented in a later phase.
+    startButton.disabled = false;
+    stopButton.disabled = true;
+    chrome.runtime.sendMessage({ type: 'STOP_TRACKING' });
   });
 });

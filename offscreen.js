@@ -4,13 +4,10 @@
 
 const TARGET_FRAME_WIDTH = 1024;
 const JPEG_QUALITY = 0.6;
-const FRAME_EXTRACTION_INTERVAL_MS = 2000;
 
 const videoElement = document.getElementById('capture-stream');
 const frameCanvas = document.getElementById('frame-canvas');
 const frameContext = frameCanvas.getContext('2d');
-
-let frameExtractionIntervalId = null;
 
 /**
  * Returns true when the video element has a drawable frame.
@@ -50,23 +47,6 @@ function extractFrame() {
 }
 
 /**
- * Starts periodic frame extraction for testing and verification.
- */
-function startFrameExtraction() {
-  if (frameExtractionIntervalId !== null) {
-    clearInterval(frameExtractionIntervalId);
-  }
-
-  frameExtractionIntervalId = setInterval(() => {
-    const base64Frame = extractFrame();
-
-    if (base64Frame) {
-      console.log('[Offscreen] Extracted frame base64 length:', base64Frame.length);
-    }
-  }, FRAME_EXTRACTION_INTERVAL_MS);
-}
-
-/**
  * Binds a tab capture stream to the hidden video element.
  * @param {string} streamId - Media stream ID from chrome.tabCapture.getMediaStreamId
  */
@@ -83,17 +63,23 @@ async function startCaptureStream(streamId) {
 
   videoElement.srcObject = mediaStream;
   await videoElement.play();
-  startFrameExtraction();
 }
 
 chrome.runtime.onMessage.addListener((message) => {
-  if (message.type !== 'START_STREAM' || !message.streamId) {
+  if (message.type === 'START_STREAM' && message.streamId) {
+    startCaptureStream(message.streamId).catch((error) => {
+      console.error('[Offscreen] Failed to start capture stream:', error);
+    });
     return;
   }
 
-  startCaptureStream(message.streamId).catch((error) => {
-    console.error('[Offscreen] Failed to start capture stream:', error);
-  });
+  if (message.type === 'TAKE_SNAPSHOT') {
+    const base64Frame = extractFrame();
+
+    if (base64Frame) {
+      console.log('[Offscreen] Extracted frame base64 length:', base64Frame.length);
+    }
+  }
 });
 
 setInterval(() => {

@@ -50,8 +50,17 @@
       border: 1px solid #dadce0;
     }
 
-    #stop-tracking:hover {
-      background-color: #f1f3f4;
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    #start-tracking:disabled:hover {
+      background-color: #1a73e8;
+    }
+
+    #stop-tracking:disabled:hover {
+      background-color: #ffffff;
     }
   </style>
 </head>
@@ -59,7 +68,7 @@
   <h1>Visual AI Agent</h1>
   <div class="controls">
     <button id="start-tracking" type="button">Start Tracking</button>
-    <button id="stop-tracking" type="button">Stop Tracking</button>
+    <button id="stop-tracking" type="button" disabled>Stop Tracking</button>
   </div>
   <script src="popup.js"></script>
 </body>

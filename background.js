@@ -37,6 +37,10 @@ async function createOffscreenDocument() {
  * Starts tab capture by creating the offscreen document and forwarding the stream ID.
  */
 async function startTabCapture() {
+  if (await hasOffscreenDocument()) {
+    return;
+  }
+
   await createOffscreenDocument();
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -54,6 +58,32 @@ async function startTabCapture() {
   });
 }
 
+/**
+ * Stops tab capture and closes the offscreen document to release the media stream.
+ */
+async function stopTabCapture() {
+  if (!(await hasOffscreenDocument())) {
+    return;
+  }
+
+  await chrome.offscreen.closeDocument();
+}
+
+/**
+ * Forwards snapshot requests to the offscreen document when it is available.
+ */
+async function routeSnapshotToOffscreen() {
+  try {
+    if (!(await hasOffscreenDocument())) {
+      return;
+    }
+
+    await chrome.runtime.sendMessage({ type: 'TAKE_SNAPSHOT' });
+  } catch {
+    // Offscreen document is not ready to receive messages yet.
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (message.type === 'keepAlive') {
     console.log(
@@ -67,5 +97,17 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     startTabCapture().catch((error) => {
       console.error('[Background] Failed to start tab capture:', error);
     });
+    return;
+  }
+
+  if (message.type === 'STOP_TRACKING') {
+    stopTabCapture().catch((error) => {
+      console.error('[Background] Failed to stop tab capture:', error);
+    });
+    return;
+  }
+
+  if (message.type === 'TAKE_SNAPSHOT' && sender.tab) {
+    routeSnapshotToOffscreen();
   }
 });
