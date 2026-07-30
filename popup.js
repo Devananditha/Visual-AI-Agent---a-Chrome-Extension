@@ -7,7 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const stopButton = document.getElementById('stop-tracking');
 
   startButton.addEventListener('click', () => {
-    // Tracking start logic will be implemented in a later phase.
+    chrome.runtime.sendMessage({ type: 'START_TRACKING' });
   });
 
   stopButton.addEventListener('click', () => {
