@@ -1,10 +1,14 @@
 const express = require('express');
 const fs = require('fs/promises');
 const http = require('http');
+const jwt = require('jsonwebtoken');
 const path = require('path');
 const { WebSocketServer } = require('ws');
 
 const PORT = process.env.PORT || 3000;
+const SECRET_KEY = process.env.JWT_SECRET || 'visual-ai-agent-dev-secret-key';
+const AUTH_USERNAME = 'visual-ai-agent';
+const AUTH_PASSWORD = 'extension-secret';
 const DATA_DIR = path.join(__dirname, 'data');
 const ACTIVITY_LOG_PATH = path.join(DATA_DIR, 'activity-log.ndjson');
 
@@ -13,9 +17,28 @@ const app = express();
 let writeQueue = Promise.resolve();
 
 app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.json());
 
 app.get('/health', (_request, response) => {
   response.json({ status: 'ok' });
+});
+
+app.post('/api/auth', (request, response) => {
+  console.log('[Server] Token requested');
+  const { username, password } = request.body;
+
+  if (username !== AUTH_USERNAME || password !== AUTH_PASSWORD) {
+    response.status(401).json({ error: 'Invalid credentials.' });
+    return;
+  }
+
+  const token = jwt.sign(
+    { sub: username },
+    SECRET_KEY,
+    { expiresIn: '24h' },
+  );
+
+  response.json({ token });
 });
 
 app.get('/api/activity', async (_request, response) => {
@@ -77,10 +100,49 @@ const visionStreamServer = new WebSocketServer({
   server,
   path: '/vision-stream',
   maxPayload: 16 * 1024 * 1024,
+  verifyClient: (info, done) => {
+    try {
+      const requestUrl = new URL(info.req.url, `http://${info.req.headers.host}`);
+      const token = requestUrl.searchParams.get('token');
+
+      if (!token) {
+        console.warn('[Server] WebSocket rejected: missing token');
+        if (info.req.socket) {
+          info.req.socket.destroy();
+        }
+        done(false, 401, 'Unauthorized');
+        return;
+      }
+
+      jwt.verify(token, SECRET_KEY);
+      done(true);
+    } catch (error) {
+      console.warn('[Server] WebSocket rejected: invalid token');
+      if (info.req.socket) {
+        info.req.socket.destroy();
+      }
+      done(false, 401, 'Unauthorized');
+    }
+  },
 });
 
-visionStreamServer.on('connection', (socket) => {
-  console.log('[Server] WebSocket client connected on /vision-stream');
+visionStreamServer.on('connection', (socket, request) => {
+  try {
+    const requestUrl = new URL(request.url, `http://${request.headers.host}`);
+    const token = requestUrl.searchParams.get('token');
+
+    if (!token) {
+      socket.destroy();
+      return;
+    }
+
+    jwt.verify(token, SECRET_KEY);
+  } catch {
+    socket.destroy();
+    return;
+  }
+
+  console.log('[Server] WebSocket client connected on /vision-stream?token=***');
 
   socket.on('message', async (rawMessage) => {
     try {

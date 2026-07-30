@@ -4,8 +4,47 @@
  */
 
 const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
+const AUTH_URL = 'http://localhost:3000/api/auth';
+const AUTH_USERNAME = 'visual-ai-agent';
+const AUTH_PASSWORD = 'extension-secret';
 
 let isCapturing = false;
+let jwtToken = null;
+
+/**
+ * Fetches a JWT from the backend auth endpoint and stores it in memory.
+ */
+async function fetchAuthToken() {
+  try {
+    const response = await fetch(AUTH_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        username: AUTH_USERNAME,
+        password: AUTH_PASSWORD,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Auth request failed with status ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    if (!data.token) {
+      throw new Error('Auth response did not include a token.');
+    }
+
+    jwtToken = data.token;
+    console.log('[Background] JWT fetched successfully.');
+    return jwtToken;
+  } catch (error) {
+    console.error('[Background] Failed to fetch JWT:', error);
+    throw error;
+  }
+}
 
 /**
  * Returns true if the offscreen document is already open.
@@ -36,14 +75,33 @@ async function createOffscreenDocument() {
 }
 
 /**
+ * Sends a message to the offscreen document with short retries while it initializes.
+ */
+async function sendToOffscreen(message) {
+  let lastError = null;
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await chrome.runtime.sendMessage(message);
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+
+  throw lastError;
+}
+
+/**
  * Starts tab capture by creating the offscreen document and forwarding the stream ID.
  */
 async function startTabCapture() {
-  if (await hasOffscreenDocument()) {
-    return;
-  }
+  const token = await fetchAuthToken();
 
-  await createOffscreenDocument();
+  if (!(await hasOffscreenDocument())) {
+    await createOffscreenDocument();
+  }
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) {
@@ -54,9 +112,10 @@ async function startTabCapture() {
     targetTabId: tab.id,
   });
 
-  await chrome.runtime.sendMessage({
+  await sendToOffscreen({
     type: 'START_STREAM',
     streamId,
+    token,
   });
 }
 
@@ -69,6 +128,7 @@ async function stopTabCapture() {
   }
 
   await chrome.offscreen.closeDocument();
+  jwtToken = null;
 }
 
 /**
