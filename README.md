@@ -3,7 +3,7 @@
 **Author:** Devananditha V  
 **Repository:** [Visual-AI-Agent---a-Chrome-Extension](https://github.com/Devananditha/Visual-AI-Agent---a-Chrome-Extension)
 
-> **Demo Video:** [Insert Loom walkthrough link here]
+
 
 ---
 
